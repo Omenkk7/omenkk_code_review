@@ -4,13 +4,19 @@ import com.alibaba.fastjson2.JSON;
 import com.omenkk.sdk.domain.model.ChatCompletionRequest;
 import com.omenkk.sdk.domain.model.ChatCompletionSyncResponse;
 import com.omenkk.sdk.domain.model.Model;
+import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 
+import javax.xml.crypto.Data;
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
+import java.util.Random;
 
 /**
  * @author omenkk7
@@ -19,9 +25,17 @@ import java.util.ArrayList;
  */
 public class GitDiffCodeReviewRunner {
 
+final static String GIT_PATH="https://github.com/Omenkk7/omenkk_code_review_log.git";
+
+
 
     public static void main(String[] args) throws Exception{
-        //添加命令并且切换目录
+        //获取token
+        String token =System.getenv("GITHUB_TOKEN");
+        if(token==null||token.isEmpty()){
+            throw new RuntimeException("token is empty");
+        }
+        //获取diff并且收集
         ProcessBuilder processBuilder=new ProcessBuilder("git", "diff", "HEAD~1","HEAD");
         processBuilder.directory(new File("."));//
 
@@ -43,6 +57,9 @@ public class GitDiffCodeReviewRunner {
         // 2. 调用大模型 进行 代码评审
         String log = codeReview(diffCode.toString());
         System.out.println("code review：" + log);
+
+        // 3. 写入日志
+        writeLog()
 
     }
 
@@ -96,5 +113,42 @@ public class GitDiffCodeReviewRunner {
         //获取json格式后的数据
         return chatCompletionSyncResponse.getChoices().get(0).getMessage().getContent();
 
+    }
+
+    public static String writeLog(String token,String log) throws Exception{
+        //拉取到本地
+        Git git=Git.cloneRepository().setURI(GIT_PATH)
+                .setDirectory(new File("repo"))
+                .setCredentialsProvider(new UsernamePasswordCredentialsProvider(token,""))
+                .call();
+        //创建当天的日志文件 如果没有的话
+        String dateFormatName=new SimpleDateFormat("yyyy-MM-dd").format(new Date());
+        File dateFolder=new File("repo/"+dateFormatName);
+        if(!dateFolder.exists()){
+            //创建文件
+            dateFolder.mkdirs();
+        }
+        //创建日志文件
+        String fileName=generateRandomString(12)+".md";
+        File newFile=new File(dateFolder,fileName);
+        try(FileWriter fileWriter=new FileWriter(newFile)){
+          fileWriter.write(log);
+        }
+        git.add().addFilepattern(dateFormatName+"/"+fileName).call();
+        git.commit().setMessage("add new file via GitHub Actions").call();
+        git.push().setCredentialsProvider(new UsernamePasswordCredentialsProvider(token,"")).call();
+        System.out.println("【log】change have been pushed to the repository");
+
+        return "log";
+    }
+
+    private static String generateRandomString(int length) {
+        String characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        Random random = new Random();
+        StringBuilder sb = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            sb.append(characters.charAt(random.nextInt(characters.length())));
+        }
+        return sb.toString();
     }
 }
